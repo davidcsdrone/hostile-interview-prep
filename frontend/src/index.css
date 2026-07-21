@@ -1,0 +1,127 @@
+/* Step 1: Define CSS variables */
+:root {
+--primary-color: #3b82f6;
+--success-color: #10b981;
+--error-color: #ef4444;
+--text-color: #1f2937;
+--bg-color: #f9fafb;
+--border-color: #e5e7eb;
+}
+/* Step 2: Global styles */
+* {
+margin: 0;
+padding: 0;
+box-sizing: border-box;
+}
+body {
+font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+color: var(--text-color);
+background-color: var(--bg-color);
+line-height: 1.6;
+}
+/* Step 3: App layout */
+.app {
+display: flex;
+flex-direction: column;
+min-height: 100vh;
+}
+.app-header {
+background-color: var(--primary-color);
+color: white;
+padding: 2rem;
+text-align: center;
+}
+.app-main {
+flex: 1;
+padding: 2rem;
+max-width: 1200px;
+margin: 0 auto;
+width: 100%;
+}
+.app-footer {
+background-color: #f3f4f6;
+padding: 1rem;
+text-align: center;
+border-top: 1px solid var(--border-color);
+}
+/* Step 4: Recorder styles */
+.recorder-container {
+display: flex;
+flex-direction: column;
+align-items: center;
+gap: 1.5rem;
+}
+video {
+width: 100%;
+max-width: 640px;
+border-radius: 8px;
+background-color: #000;
+}
+.timer {
+font-size: 3rem;
+font-weight: bold;
+color: var(--primary-color);
+}
+/* Step 5: Button styles */
+button {
+padding: 0.75rem 1.5rem;
+font-size: 1rem;
+border: none;
+border-radius: 4px;
+background-color: var(--primary-color);
+color: white;
+cursor: pointer;
+transition: opacity 0.2s;
+}
+button:hover:not(:disabled) {
+opacity: 0.9;
+}
+button:disabled {
+opacity: 0.5;
+cursor: not-allowed;
+}
+/* Step 6: Feedback styles */
+.feedback-container {
+display: flex;
+flex-direction: column;
+gap: 1rem;
+padding: 2rem;
+background-color: white;
+border-radius: 8px;
+box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.score-badge {
+font-size: 2rem;
+font-weight: bold;
+padding: 1rem;
+border-radius: 4px;
+text-align: center;
+}
+.score-badge.pass {
+background-color: var(--success-color);
+color: white;
+}
+.score-badge.fail {
+background-color: var(--error-color);
+color: white;
+}
+/* Step 7: Session history styles */
+.history-container {
+margin-top: 2rem;
+}
+.sessions-list {
+display: grid;
+grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+gap: 1rem;
+margin-top: 1rem;
+}
+.session-card {
+padding: 1rem;
+background-color: white;
+border-radius: 8px;
+box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.session-score {
+font-weight: bold;
+margin: 0.5rem 0;
+}

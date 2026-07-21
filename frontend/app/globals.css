@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+body {
+  background-color: #000;
+  color: #fff;
+  font-family: system-ui, sans-serif;
+}
+
+button {
+  padding: 10px 20px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  margin-right: 10px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-start { background-color: #dc2626; color: white; }
+.btn-stop { background-color: #4b5563; color: white; }
+.btn-submit { background-color: #16a34a; color: white; }
+.btn-try-another { background-color: #ffffff; color: black; }
