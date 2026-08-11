@@ -1,48 +1,74 @@
-import { Feedback } from '../types';
+import { Feedback, WEAKNESS_TAGS } from "../types";
 
 interface Props {
-    feedback: Feedback;
+  feedback: Feedback;
+}
+
+function tagLabel(id: string): string {
+  return WEAKNESS_TAGS.find((t) => t.id === id)?.label ?? id;
 }
 
 export function FeedbackDisplay({ feedback }: Props) {
-    return (
-        <div className="feedback-container">
-            <h2>Auditor Evaluation</h2>
-            
-            <div className="score-number">
-                {feedback.logical_score}/100
-            </div>
+  const tags = feedback.weakness_tags ?? [];
 
-            <div className="feedback-text">
-                <h3>Hostile Critique</h3>
-                <p>{feedback.hostile_critique}</p>
-            </div>
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+          Score
+        </p>
+        <p className="text-3xl font-semibold text-gray-900">
+          {feedback.logical_score}
+          <span className="text-lg text-gray-400 font-normal">/100</span>
+        </p>
+      </div>
 
-            <div className="missed-points">
-                <h3>Flaws Detected</h3>
-                <ul>
-                    {feedback.missed_points?.map((point, index) => (
-                        <li key={index}>{point}</li>
-                    ))}
-                </ul>
-            </div>
-
-            <div className="action-step">
-                <h3>Next Step</h3>
-                <p>{feedback.next_step_action}</p>
-            </div>
-            {/* The Transcript Dropdown */}
-            <div className="transcript-section mt-8 border-t border-gray-800 pt-6">
-                <details className="group">
-                    <summary className="cursor-pointer text-gray-400 font-bold hover:text-white transition-colors flex justify-between items-center outline-none">
-                        VIEW RAW TRANSCRIPT
-                        <span className="text-xl group-open:rotate-180 transition-transform">↓</span>
-                    </summary>
-                    <div className="mt-4 p-5 bg-gray-900 rounded-lg text-gray-300 italic border border-gray-700 leading-relaxed">
-                        "{feedback.transcript}"
-                    </div>
-                </details>
-            </div>
+      {tags.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white p-6">
+          <h3 className="text-sm font-medium text-gray-900 mb-3">Weakness tags</h3>
+          <div className="flex flex-wrap gap-2">
+            {tags.map((tag) => (
+              <span
+                key={tag}
+                className="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-700"
+              >
+                {tagLabel(tag)}
+              </span>
+            ))}
+          </div>
         </div>
-    );
+      )}
+
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-2">Hostile critique</h3>
+        <p className="text-sm text-gray-600 leading-relaxed">{feedback.hostile_critique}</p>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-3">Flaws detected</h3>
+        <ul className="space-y-2">
+          {feedback.missed_points?.map((point, index) => (
+            <li key={index} className="text-sm text-gray-600 flex items-start gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-300 mt-1.5 shrink-0" />
+              {point}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-2">Next step</h3>
+        <p className="text-sm text-gray-600 leading-relaxed">{feedback.next_step_action}</p>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-2">Raw transcript</h3>
+        <p className="text-sm text-gray-500 leading-relaxed italic">
+          {feedback.transcript
+            ? `\u201C${feedback.transcript}\u201D`
+            : "No transcript saved for this session."}
+        </p>
+      </div>
+    </div>
+  );
 }

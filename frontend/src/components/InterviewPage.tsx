@@ -1,160 +1,169 @@
 "use client";
 
+import { useState, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { Question, Session, normalizeWeaknessTags } from "../types";
+import { InterviewRecorder } from "../components/InterviewRecorder";
+import { saveSession } from "../lib/sessions";
 
-
-
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import { Question, Feedback, Session } from '../types';
-import { QuestionDisplay } from '../components/QuestionDisplay';
-import { InterviewRecorder } from '../components/InterviewRecorder';
-import { FeedbackDisplay } from '../components/FeedbackDisplay';
-// Note: If you haven't built SessionHistory.tsx yet, this next line will error. 
-// You can comment it out with // if needed.
-import { SessionHistory } from '../components/SessionHistory';
+function pickRandomQuestion(pool: Question[], excludeId?: string): Question | null {
+  const candidates = excludeId ? pool.filter((q) => q.id !== excludeId) : pool;
+  const list = candidates.length > 0 ? candidates : pool;
+  if (list.length === 0) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
 
 export function InterviewPage() {
-    const searchParams = useSearchParams();
-    const companyFilter = searchParams.get('company');
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const companyFilter = searchParams.get("company");
+  const roleFilter = searchParams.get("role");
 
-    // 1. State
-    const [questions, setQuestions] = useState<Question[]>([]);
-    const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
-    const [feedback, setFeedback] = useState<Feedback | null>(null);
-    const [sessions, setSessions] = useState<Session[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-    // 2. Fetch initial questions
-    useEffect(() => {
-        fetchQuestions();
-    }, []);
+  const assignRandomQuestion = useCallback(
+    (pool: Question[], excludeId?: string) => {
+      const next = pickRandomQuestion(pool, excludeId);
+      setSelectedQuestion(next);
+    },
+    []
+  );
 
+  useEffect(() => {
     const fetchQuestions = async () => {
-        try {
-            const response = await fetch('http://localhost:8000/questions');
-            const data = await response.json();
-            setQuestions(data);
-        } catch (error) {
-            console.error("Failed to fetch questions", error);
-        }
+      setIsFetching(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams();
+        if (companyFilter) params.set("company", companyFilter);
+        if (roleFilter) params.set("role", roleFilter);
+
+        const response = await fetch(
+          `http://localhost:8000/questions/?${params.toString()}`
+        );
+        if (!response.ok) throw new Error("Failed to load questions");
+
+        const data: Question[] = await response.json();
+        setQuestions(data);
+        assignRandomQuestion(data);
+      } catch (err) {
+        console.error("Failed to fetch questions", err);
+        setError("Could not load questions. Is the backend running?");
+      } finally {
+        setIsFetching(false);
+      }
     };
 
-    // 3. Handle Video Submission
-   const handleSubmitRecording = async (blob: Blob) => {
+    fetchQuestions();
+  }, [companyFilter, roleFilter, assignRandomQuestion]);
+
+  const handleSubmitRecording = async (blob: Blob) => {
     setIsLoading(true);
+
     try {
       const formData = new FormData();
-      formData.append('file', blob, 'interview.webm');
+      formData.append("file", blob, "interview.webm");
 
-      const response = await fetch('http://localhost:8000/process-video', {
-        method: 'POST',
-        body: formData
+      const response = await fetch("http://localhost:8000/process-video", {
+        method: "POST",
+        body: formData,
       });
 
-      // ADD THIS BLOCK: Stop if the backend throws a 500 error
       if (!response.ok) {
-        alert("The server crashed while processing the video. Check your Python terminal for the exact error.");
+        alert(
+          "The server crashed while processing the video. Check your Python terminal for the exact error."
+        );
         setIsLoading(false);
-        return; 
+        return;
       }
 
       const data = await response.json();
-      setFeedback(data);
+      const feedback = {
+        ...data,
+        weakness_tags: normalizeWeaknessTags(data.weakness_tags),
+      };
 
       if (selectedQuestion) {
-        setSessions([...sessions, {
+        const newSession: Session = {
           id: Date.now().toString(),
           questionId: selectedQuestion.id,
+          question: selectedQuestion.question,
+          company: selectedQuestion.company,
           timestamp: new Date().toISOString(),
-          feedback: data
-        }]);
+          feedback,
+        };
+        saveSession(newSession);
+        // Replace interview URL so browser Back goes to dashboard, not a new question
+        router.replace(`/sessions/${newSession.id}`);
+        return;
       }
-    } catch (error) {
-      console.error('Error processing video:', error);
+    } catch (err) {
+      console.error("Error processing video:", err);
       alert("Failed to communicate with the backend.");
     } finally {
       setIsLoading(false);
     }
   };
 
-    // 4. Try Another Question
-    const handleTryAnother = () => {
-        setSelectedQuestion(null);
-        setFeedback(null);
-    };
+  const handleTryAnother = () => {
+    assignRandomQuestion(questions, selectedQuestion?.id);
+  };
 
-    // 5. Conditional Rendering
-    if (isLoading) {
+  const companyLabel = companyFilter
+    ? companyFilter.charAt(0).toUpperCase() + companyFilter.slice(1)
+    : null;
+
+  if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white p-24">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-red-600 border-b-4 border-transparent mb-6"></div>
-        <h2 className="text-3xl font-bold mb-2">Auditor is analyzing your logic...</h2>
-        <p className="text-gray-400">Extracting audio, transcribing, and running models.</p>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-900 p-8">
+        <div className="animate-spin rounded-full h-10 w-10 border-2 border-gray-900 border-t-transparent mb-6" />
+        <h2 className="text-xl font-semibold mb-1">Auditor is analyzing your logic...</h2>
+        <p className="text-sm text-gray-500">
+          Extracting audio, transcribing, and running models.
+        </p>
       </div>
     );
   }
 
-    if (feedback) {
-        return (
-            <div className="page-container flex flex-col items-center p-8">
-                <FeedbackDisplay feedback={feedback} />
-                <button onClick={handleTryAnother} className="btn-try-another mt-8 bg-blue-600 text-white px-6 py-2 rounded">
-                    Try Another Question
-                </button>
-                <SessionHistory sessions={sessions} />
-            </div>
-        );
-    }
-
-    if (selectedQuestion) {
-        return (
-            <InterviewRecorder 
-                question={selectedQuestion}
-                onSubmit={handleSubmitRecording}
-            />
-        );
-    }
-
-    const filteredQuestions = companyFilter
-        ? questions.filter(
-            (q) => q.company.toLowerCase() === companyFilter.toLowerCase()
-          )
-        : questions;
-
-    const companyLabel = companyFilter
-        ? companyFilter.charAt(0).toUpperCase() + companyFilter.slice(1)
-        : null;
-
+  if (isFetching) {
     return (
-        <div className="page-container p-8 text-white min-h-screen bg-black">
-            <div className="max-w-4xl mx-auto mb-8 flex items-center justify-between">
-                <Link href="/dashboard" className="text-sm text-gray-400 hover:text-white">
-                    ← Back to dashboard
-                </Link>
-                {companyLabel && (
-                    <span className="text-sm text-gray-400">Practicing for {companyLabel}</span>
-                )}
-            </div>
-            <h1 className="text-4xl font-bold text-center mb-12">Hostile Logic-Trainer</h1>
-            {filteredQuestions.length === 0 ? (
-                <p className="text-center text-gray-400">
-                    {companyFilter
-                        ? `No questions found for ${companyLabel}. Is the backend running?`
-                        : 'No questions loaded. Is the backend running?'}
-                </p>
-            ) : (
-                <div className="questions-grid grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
-                    {filteredQuestions.map((question) => (
-                        <QuestionDisplay
-                            key={question.id}
-                            question={question}
-                            onSelect={() => setSelectedQuestion(question)}
-                        />
-                    ))}
-                </div>
-            )}
-            <SessionHistory sessions={sessions} />
-        </div>
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 text-sm text-gray-500">
+        Loading your interview question...
+      </div>
     );
+  }
+
+  if (error || !selectedQuestion) {
+    return (
+      <div className="min-h-screen bg-gray-50 text-gray-900">
+        <div className="max-w-3xl mx-auto px-8 py-10 space-y-4">
+          <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-900">
+            ← Back to dashboard
+          </Link>
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <p className="text-sm text-gray-600">
+              {error ??
+                `No questions found${companyLabel ? ` for ${companyLabel}` : ""}${
+                  roleFilter ? ` (${roleFilter})` : ""
+                }.`}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <InterviewRecorder
+      key={selectedQuestion.id}
+      question={selectedQuestion}
+      onSubmit={handleSubmitRecording}
+      onTryDifferent={handleTryAnother}
+    />
+  );
 }
