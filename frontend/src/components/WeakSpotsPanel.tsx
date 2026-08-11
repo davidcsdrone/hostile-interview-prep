@@ -7,6 +7,11 @@ import {
   WEAKNESS_TAGS,
   normalizeWeaknessTags,
 } from "../types";
+import {
+  OTHER_COMPANY,
+  canonicalizeCompany,
+  isOtherCompany,
+} from "../lib/companies";
 
 const MIN_SESSIONS = 3;
 const WINDOW_SIZE = 8;
@@ -15,7 +20,7 @@ const MIN_TAG_HITS = 2;
 const MAX_SPOTS = 5;
 const MAX_EXAMPLE_LINKS = 2;
 
-/** "all" = every company; otherwise a company display name (e.g. "Amazon") */
+/** "all" = every company; otherwise a company display name (e.g. "Amazon") or Other */
 export type WeakSpotsFilter = "all" | string;
 
 /** Phase 3: one concrete drill per tag */
@@ -114,7 +119,7 @@ export function aggregateWeakSpots(sessions: Session[]): {
   for (const session of window) {
     const tags = normalizeWeaknessTags(session.feedback?.weakness_tags);
     const unique = [...new Set(tags)];
-    const company = session.company?.trim() || "Unknown";
+    const company = canonicalizeCompany(session.company);
     const missed = session.feedback?.missed_points;
     const evidenceLine =
       Array.isArray(missed) && typeof missed[0] === "string" && missed[0].trim()
@@ -294,6 +299,27 @@ function chipClass(active: boolean): string {
   }`;
 }
 
+function sessionsForFilter(
+  sessions: Session[],
+  filter: WeakSpotsFilter,
+  knownNames: string[]
+): Session[] {
+  if (filter === "all") return sessions;
+
+  const known = new Set(knownNames.map((n) => n.toLowerCase()));
+  const isOtherFilter = filter.toLowerCase() === OTHER_COMPANY.toLowerCase();
+
+  return sessions.filter((s) => {
+    const company = canonicalizeCompany(s.company);
+    if (isOtherFilter) {
+      return (
+        company === OTHER_COMPANY || !known.has(company.toLowerCase())
+      );
+    }
+    return company.toLowerCase() === filter.toLowerCase();
+  });
+}
+
 export function WeakSpotsPanel({
   sessions,
   companyNames,
@@ -302,13 +328,19 @@ export function WeakSpotsPanel({
   onPractice,
 }: Props) {
   const isCompanyFilter = filter !== "all";
-  const filterLabel = isCompanyFilter ? filter : "all companies";
+  const isOtherFilter =
+    filter.toLowerCase() === OTHER_COMPANY.toLowerCase();
+  const filterLabel = !isCompanyFilter
+    ? "all companies"
+    : isOtherFilter
+      ? "Other (missing or unrecognized company)"
+      : filter;
 
-  const scopedSessions = isCompanyFilter
-    ? sessions.filter(
-        (s) => s.company?.toLowerCase() === filter.toLowerCase()
-      )
-    : sessions;
+  const hasOtherSessions = sessions.some((s) => isOtherCompany(s.company));
+  // Keep Other visible if it's the active filter, even after orphans are cleaned up
+  const showOtherChip = hasOtherSessions || isOtherFilter;
+
+  const scopedSessions = sessionsForFilter(sessions, filter, companyNames);
 
   const { ready, sessionCount, spots, improving } =
     aggregateWeakSpots(scopedSessions);
@@ -342,6 +374,21 @@ export function WeakSpotsPanel({
               {name}
             </button>
           ))}
+          {showOtherChip && (
+            <button
+              type="button"
+              onClick={() => onFilterChange(OTHER_COMPANY)}
+              className={chipClass(
+                filter.toLowerCase() === OTHER_COMPANY.toLowerCase()
+              )}
+              aria-pressed={
+                filter.toLowerCase() === OTHER_COMPANY.toLowerCase()
+              }
+              title="Sessions with a missing or unrecognized company"
+            >
+              {OTHER_COMPANY}
+            </button>
+          )}
         </div>
         <p className="text-xs text-gray-500">
           Showing: {filterLabel}
@@ -357,8 +404,12 @@ export function WeakSpotsPanel({
           <p className="text-sm text-gray-500">
             {isCompanyFilter ? (
               <>
-                Complete at least {MIN_SESSIONS} practice sessions for {filter} so
-                we can find patterns on this track. You have {sessionCount} so far.
+                Complete at least {MIN_SESSIONS} practice sessions
+                {isOtherFilter
+                  ? " with a missing or unrecognized company"
+                  : ` for ${filter}`}{" "}
+                so we can find patterns on this track. You have {sessionCount} so
+                far.
                 {showAllHint ? (
                   <>
                     {" "}

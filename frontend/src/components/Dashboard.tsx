@@ -20,6 +20,7 @@ import {
   hasActiveWeakSpots,
   type WeakSpotsFilter,
 } from "./WeakSpotsPanel";
+import { OTHER_COMPANY } from "../lib/companies";
 
 const WEAK_SPOTS_FILTER_KEY = "hlt-weak-spots-filter";
 
@@ -246,6 +247,9 @@ function readStoredWeakSpotsFilter(): WeakSpotsFilter {
   try {
     const saved = window.localStorage.getItem(WEAK_SPOTS_FILTER_KEY);
     if (saved === "all") return "all";
+    if (saved && saved.toLowerCase() === OTHER_COMPANY.toLowerCase()) {
+      return OTHER_COMPANY;
+    }
     if (saved && COMPANIES.some((c) => c.name.toLowerCase() === saved.toLowerCase())) {
       const match = COMPANIES.find(
         (c) => c.name.toLowerCase() === saved.toLowerCase()
@@ -287,15 +291,16 @@ export default function Dashboard() {
     }
   };
 
-  /** Chip → filter; picking a company also updates the practice target */
+  /** Chip → filter; picking a known company also updates the practice target */
   const handleWeakSpotsFilterChange = (filter: WeakSpotsFilter) => {
     persistWeakSpotsFilter(filter);
-    if (filter !== "all") {
-      const match = COMPANIES.find(
-        (c) => c.name.toLowerCase() === filter.toLowerCase()
-      );
-      if (match) setSelectedCompany(match.id);
+    if (filter === "all" || filter.toLowerCase() === OTHER_COMPANY.toLowerCase()) {
+      return;
     }
+    const match = COMPANIES.find(
+      (c) => c.name.toLowerCase() === filter.toLowerCase()
+    );
+    if (match) setSelectedCompany(match.id);
   };
 
   /** Sidebar company: stay on Weak Spots and sync the chip; otherwise go to Companies */

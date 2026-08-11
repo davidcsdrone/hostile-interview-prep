@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Question, Session, normalizeWeaknessTags } from "../types";
 import { InterviewRecorder } from "../components/InterviewRecorder";
 import { saveSession } from "../lib/sessions";
+import { canonicalizeCompany } from "../lib/companies";
 
 function pickRandomQuestion(pool: Question[], excludeId?: string): Question | null {
   const candidates = excludeId ? pool.filter((q) => q.id !== excludeId) : pool;
@@ -93,7 +94,10 @@ export function InterviewPage() {
           id: Date.now().toString(),
           questionId: selectedQuestion.id,
           question: selectedQuestion.question,
-          company: selectedQuestion.company,
+          // Prefer question company; fall back to URL slug (amazon → Amazon)
+          company: canonicalizeCompany(
+            selectedQuestion.company || companyFilter
+          ),
           timestamp: new Date().toISOString(),
           feedback,
         };
