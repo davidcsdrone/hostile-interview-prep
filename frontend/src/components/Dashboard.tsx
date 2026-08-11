@@ -62,7 +62,12 @@ interface SidebarButtonProps {
 }
 
 interface SidebarProps {
-  selectedCompany: string;
+  /**
+   * Which company row is visually active.
+   * On Weak Spots this follows the filter chip (null when filter is All).
+   * Elsewhere this is the practice-target company.
+   */
+  highlightedCompanyId: string | null;
   onSelectCompany: (id: string) => void;
   onStartSession: () => void;
   view: NavView;
@@ -101,7 +106,13 @@ function SidebarButton({ active, onClick, justify = "start", children }: Sidebar
   );
 }
 
-function Sidebar({ selectedCompany, onSelectCompany, onStartSession, view, onSelectView }: SidebarProps) {
+function Sidebar({
+  highlightedCompanyId,
+  onSelectCompany,
+  onStartSession,
+  view,
+  onSelectView,
+}: SidebarProps) {
   const navItems: NavItem[] = [
     { id: "companies", label: "Companies", icon: Building2 },
     { id: "history", label: "History", icon: History },
@@ -138,7 +149,7 @@ function Sidebar({ selectedCompany, onSelectCompany, onStartSession, view, onSel
         {COMPANIES.map((c) => (
           <SidebarButton
             key={c.id}
-            active={selectedCompany === c.id}
+            active={highlightedCompanyId === c.id}
             onClick={() => onSelectCompany(c.id)}
             justify="between"
           >
@@ -317,6 +328,17 @@ export default function Dashboard() {
 
   if (!company) return null;
 
+  // On Weak Spots, sidebar highlight mirrors the filter chip (none when All).
+  // Elsewhere it mirrors the practice-target company.
+  const sidebarHighlightedCompanyId: string | null =
+    view === "weakspots"
+      ? weakSpotsFilter === "all"
+        ? null
+        : (COMPANIES.find(
+            (c) => c.name.toLowerCase() === weakSpotsFilter.toLowerCase()
+          )?.id ?? null)
+      : selectedCompany;
+
   const companySessions = sortNewestFirst(
     storedSessions.filter(
       (s) => s.company?.toLowerCase() === company.name.toLowerCase()
@@ -330,7 +352,7 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen bg-gray-50 text-gray-900 font-sans">
       <Sidebar
-        selectedCompany={selectedCompany}
+        highlightedCompanyId={sidebarHighlightedCompanyId}
         onSelectCompany={handleSelectCompany}
         onStartSession={openRolePicker}
         view={view}
