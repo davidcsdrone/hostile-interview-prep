@@ -21,23 +21,16 @@ import {
   type WeakSpotsFilter,
 } from "./WeakSpotsPanel";
 import { OTHER_COMPANY } from "../lib/companies";
+import {
+  computeCompanyProgress,
+  type CompanyProgress,
+} from "../lib/progress";
 
 const WEAK_SPOTS_FILTER_KEY = "hlt-weak-spots-filter";
-
-export type StageID = "initial" | "getting_there" | "interview_ready" | "crush_it";
 
 export interface CompanySummary {
   id: string;
   name: string;
-  stage: StageID;
-  lastScore: number;
-  sessions: number;
-}
-
-interface StageInfo {
-  label: string;
-  color: string;
-  pct: number;
 }
 
 type NavView = "companies" | "history" | "weakspots" | "settings";
@@ -49,10 +42,7 @@ interface NavItem {
 }
 
 interface ProgressBarProps {
-  stage: StageID;
-  hasSessions: boolean;
-  /** Phase 3: Crush It locked while active weak spots remain */
-  crushItBlocked?: boolean;
+  progress: CompanyProgress;
 }
 
 interface SidebarButtonProps {
@@ -69,6 +59,8 @@ interface SidebarProps {
    * Elsewhere this is the practice-target company.
    */
   highlightedCompanyId: string | null;
+  /** Real progress color per company id (from sessions, not hardcoded) */
+  companyProgressById: Record<string, CompanyProgress>;
   onSelectCompany: (id: string) => void;
   onStartSession: () => void;
   view: NavView;
@@ -81,17 +73,10 @@ interface SessionListProps {
 }
 
 const COMPANIES: CompanySummary[] = [
-  { id: "amazon", name: "Amazon", stage: "getting_there", lastScore: 62, sessions: 8 },
-  { id: "meta", name: "Meta", stage: "initial", lastScore: 41, sessions: 3 },
-  { id: "google", name: "Google", stage: "interview_ready", lastScore: 85, sessions: 14 },
+  { id: "amazon", name: "Amazon" },
+  { id: "meta", name: "Meta" },
+  { id: "google", name: "Google" },
 ];
-
-const STAGES: Record<StageID, StageInfo> = {
-  initial: { label: "Initial Progress", color: "bg-red-500", pct: 20 },
-  getting_there: { label: "Getting There", color: "bg-amber-500", pct: 50 },
-  interview_ready: { label: "All But Interview Ready", color: "bg-blue-500", pct: 80 },
-  crush_it: { label: "You Will Crush It", color: "bg-emerald-500", pct: 100 },
-};
 
 function SidebarButton({ active, onClick, justify = "start", children }: SidebarButtonProps) {
   return (
@@ -109,6 +94,7 @@ function SidebarButton({ active, onClick, justify = "start", children }: Sidebar
 
 function Sidebar({
   highlightedCompanyId,
+  companyProgressById,
   onSelectCompany,
   onStartSession,
   view,
@@ -147,56 +133,44 @@ function Sidebar({
         <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Your companies</p>
       </div>
       <div className="px-2 space-y-0.5 overflow-y-auto flex-1">
-        {COMPANIES.map((c) => (
-          <SidebarButton
-            key={c.id}
-            active={highlightedCompanyId === c.id}
-            onClick={() => onSelectCompany(c.id)}
-            justify="between"
-          >
-            <span>{c.name}</span>
-            <span className={`w-2 h-2 rounded-full ${STAGES[c.stage].color}`} />
-          </SidebarButton>
-        ))}
+        {COMPANIES.map((c) => {
+          const progress = companyProgressById[c.id];
+          const dotClass = progress?.colorClass ?? "bg-gray-300";
+          return (
+            <SidebarButton
+              key={c.id}
+              active={highlightedCompanyId === c.id}
+              onClick={() => onSelectCompany(c.id)}
+              justify="between"
+            >
+              <span>{c.name}</span>
+              <span className={`w-2 h-2 rounded-full ${dotClass}`} />
+            </SidebarButton>
+          );
+        })}
       </div>
     </aside>
   );
 }
 
-function ProgressBar({ stage, hasSessions, crushItBlocked }: ProgressBarProps) {
-  if (!hasSessions) {
-    return (
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-gray-900">Not started</span>
-          <span className="text-sm text-gray-500">0%</span>
-        </div>
-        <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-          <div className="h-full rounded-full bg-gray-300" style={{ width: "0%" }} />
-        </div>
-      </div>
-    );
-  }
-
-  const effectiveStage: StageID =
-    stage === "crush_it" && crushItBlocked ? "interview_ready" : stage;
-  const s = STAGES[effectiveStage];
-
+function ProgressBar({ progress }: ProgressBarProps) {
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium text-gray-900">{s.label}</span>
-        <span className="text-sm text-gray-500">{s.pct}%</span>
+        <span className="text-sm font-medium text-gray-900">{progress.label}</span>
+        <span className="text-sm text-gray-500">{progress.pct}%</span>
       </div>
       <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${s.color}`} style={{ width: `${s.pct}%` }} />
+        <div
+          className={`h-full rounded-full transition-[width] duration-500 ${progress.colorClass}`}
+          style={{ width: `${progress.pct}%` }}
+        />
       </div>
-      {stage === "crush_it" && crushItBlocked && (
-        <p className="text-xs text-gray-500 mt-2">
-          Crush It is locked until you clear active weak spots for this company. Check
-          Weak Spots → do the drill → practice again.
-        </p>
-      )}
+      <p className="text-xs text-gray-500 mt-2 leading-relaxed">{progress.summary}</p>
+      <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
+        Progress rises when your recent scores improve versus earlier ones — not from
+        practice count alone. Active weak spots cap the bar until you clear them.
+      </p>
     </div>
   );
 }
@@ -352,12 +326,24 @@ export default function Dashboard() {
   const recentCompanySessions = companySessions.slice(0, 8);
   const lastScore =
     companySessions.length > 0 ? companySessions[0].feedback.logical_score : null;
-  const crushItBlocked = hasActiveWeakSpots(companySessions);
+
+  const companyProgressById: Record<string, CompanyProgress> = {};
+  for (const c of COMPANIES) {
+    const sessionsForCompany = storedSessions.filter(
+      (s) => s.company?.toLowerCase() === c.name.toLowerCase()
+    );
+    companyProgressById[c.id] = computeCompanyProgress(sessionsForCompany, {
+      hasActiveWeakSpots: hasActiveWeakSpots(sessionsForCompany),
+    });
+  }
+  const selectedProgress =
+    companyProgressById[company.id] ?? computeCompanyProgress([]);
 
   return (
     <div className="flex h-screen bg-gray-50 text-gray-900 font-sans">
       <Sidebar
         highlightedCompanyId={sidebarHighlightedCompanyId}
+        companyProgressById={companyProgressById}
         onSelectCompany={handleSelectCompany}
         onStartSession={openRolePicker}
         view={view}
@@ -428,11 +414,7 @@ export default function Dashboard() {
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-6">
-                <ProgressBar
-                  stage={company.stage}
-                  hasSessions={companySessions.length > 0}
-                  crushItBlocked={crushItBlocked}
-                />
+                <ProgressBar progress={selectedProgress} />
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
