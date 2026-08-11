@@ -64,6 +64,8 @@ export function InterviewPage() {
   }, [companyFilter, roleFilter, assignRandomQuestion]);
 
   const handleSubmitRecording = async (blob: Blob) => {
+    // Unmounts InterviewRecorder (loading UI). Webcam cleanup must already have
+    // run in the recorder; this flag ensures we never render a live preview again.
     setIsLoading(true);
 
     try {

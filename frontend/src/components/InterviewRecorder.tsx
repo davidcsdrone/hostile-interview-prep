@@ -22,16 +22,18 @@ export function InterviewRecorder({ question, onSubmit, onTryDifferent }: Props)
   } = useVideoRecorder();
 
   useEffect(() => {
-    initializeWebcam();
-  }, []);
+    void initializeWebcam();
+  }, [initializeWebcam]);
 
   const handleSubmit = () => {
     if (!recordedBlob) return;
+    // Stop tracks before parent swaps this screen for the loading state
     stopWebcam();
     onSubmit(recordedBlob);
   };
 
   const handleTryDifferent = () => {
+    // Stop current stream before remount (new question key) opens another one
     stopWebcam();
     onTryDifferent();
   };

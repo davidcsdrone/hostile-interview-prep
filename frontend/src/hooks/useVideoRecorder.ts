@@ -8,9 +8,20 @@ export function useVideoRecorder() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
 
+  /**
+   * True while this hook instance is mounted.
+   * Prevents a late getUserMedia() result from leaving the camera on
+   * after the user already left the interview screen.
+   */
+  const aliveRef = useRef(true);
+
   const stopWebcam = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {
+        // ignore recorder stop races during unmount
+      }
     }
     mediaRecorderRef.current = null;
     setIsRecording(false);
@@ -25,26 +36,38 @@ export function useVideoRecorder() {
     }
   }, []);
 
-  const initializeWebcam = async () => {
+  const initializeWebcam = useCallback(async () => {
     try {
       // Avoid leaving an old stream on if this is called again
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: true,
       });
+
+      // User left (or remounted) while the permission/stream request was in flight.
+      // Stop immediately — otherwise the camera stays on with nothing to clean it up.
+      if (!aliveRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
     } catch (error) {
-      console.error("Error accessing webcam:", error);
+      // Permission denied / device busy — only log if we still care
+      if (aliveRef.current) {
+        console.error("Error accessing webcam:", error);
+      }
     }
-  };
+  }, []);
 
   const startRecording = () => {
     if (!streamRef.current) return;
@@ -62,6 +85,7 @@ export function useVideoRecorder() {
     };
 
     mediaRecorder.onstop = () => {
+      if (!aliveRef.current) return;
       const blob = new Blob(chunks, { type: "video/webm" });
       setRecordedBlob(blob);
     };
@@ -94,9 +118,11 @@ export function useVideoRecorder() {
     }
   }, [timeRemaining, isRecording]);
 
-  // Turn camera/mic off whenever this hook's screen goes away
+  // Mark alive on mount; kill camera/mic on unmount (Back, submit → loading, leave page)
   useEffect(() => {
+    aliveRef.current = true;
     return () => {
+      aliveRef.current = false;
       stopWebcam();
     };
   }, [stopWebcam]);
