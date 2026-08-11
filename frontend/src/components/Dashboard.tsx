@@ -15,7 +15,13 @@ import {
 } from "lucide-react";
 import { ROLES, type RoleId, type Session } from "../types";
 import { getSessions } from "../lib/sessions";
-import { WeakSpotsPanel, hasActiveWeakSpots } from "./WeakSpotsPanel";
+import {
+  WeakSpotsPanel,
+  hasActiveWeakSpots,
+  type WeakSpotsFilter,
+} from "./WeakSpotsPanel";
+
+const WEAK_SPOTS_FILTER_KEY = "hlt-weak-spots-filter";
 
 export type StageID = "initial" | "getting_there" | "interview_ready" | "crush_it";
 
@@ -224,6 +230,23 @@ function SessionList({ sessions, emptyText }: SessionListProps) {
   );
 }
 
+function readStoredWeakSpotsFilter(): WeakSpotsFilter {
+  if (typeof window === "undefined") return "all";
+  try {
+    const saved = window.localStorage.getItem(WEAK_SPOTS_FILTER_KEY);
+    if (saved === "all") return "all";
+    if (saved && COMPANIES.some((c) => c.name.toLowerCase() === saved.toLowerCase())) {
+      const match = COMPANIES.find(
+        (c) => c.name.toLowerCase() === saved.toLowerCase()
+      );
+      return match?.name ?? "all";
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return "all";
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const pathname = usePathname();
@@ -232,11 +255,48 @@ export default function Dashboard() {
   const [showRolePicker, setShowRolePicker] = useState(false);
   const [selectedRole, setSelectedRole] = useState<RoleId>("software-engineer");
   const [storedSessions, setStoredSessions] = useState<Session[]>([]);
+  const [weakSpotsFilter, setWeakSpotsFilter] = useState<WeakSpotsFilter>("all");
 
   // Reload whenever you land on the dashboard (e.g. after finishing practice)
   useEffect(() => {
     setStoredSessions(getSessions());
   }, [pathname]);
+
+  // Restore Weak Spots company filter after mount (localStorage)
+  useEffect(() => {
+    setWeakSpotsFilter(readStoredWeakSpotsFilter());
+  }, []);
+
+  const persistWeakSpotsFilter = (filter: WeakSpotsFilter) => {
+    setWeakSpotsFilter(filter);
+    try {
+      window.localStorage.setItem(WEAK_SPOTS_FILTER_KEY, filter);
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  /** Chip → filter; picking a company also updates the practice target */
+  const handleWeakSpotsFilterChange = (filter: WeakSpotsFilter) => {
+    persistWeakSpotsFilter(filter);
+    if (filter !== "all") {
+      const match = COMPANIES.find(
+        (c) => c.name.toLowerCase() === filter.toLowerCase()
+      );
+      if (match) setSelectedCompany(match.id);
+    }
+  };
+
+  /** Sidebar company: stay on Weak Spots and sync the chip; otherwise go to Companies */
+  const handleSelectCompany = (id: string) => {
+    setSelectedCompany(id);
+    if (view === "weakspots") {
+      const match = COMPANIES.find((c) => c.id === id);
+      if (match) persistWeakSpotsFilter(match.name);
+      return;
+    }
+    setView("companies");
+  };
 
   const openRolePicker = () => setShowRolePicker(true);
 
@@ -271,10 +331,7 @@ export default function Dashboard() {
     <div className="flex h-screen bg-gray-50 text-gray-900 font-sans">
       <Sidebar
         selectedCompany={selectedCompany}
-        onSelectCompany={(id) => {
-          setSelectedCompany(id);
-          setView("companies");
-        }}
+        onSelectCompany={handleSelectCompany}
         onStartSession={openRolePicker}
         view={view}
         onSelectView={setView}
@@ -284,11 +341,23 @@ export default function Dashboard() {
         <div className="max-w-3xl mx-auto px-8 py-10 space-y-8">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-semibold">{company.name}</h1>
-              <p className="text-sm text-gray-500 mt-1">
-                {companySessions.length} sessions completed
-                {lastScore !== null ? ` · last score ${lastScore}` : ""}
-              </p>
+              {view === "weakspots" ? (
+                <>
+                  <h1 className="text-2xl font-semibold">Weak Spots</h1>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Patterns from your practice history. Start practice still uses{" "}
+                    {company.name}.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h1 className="text-2xl font-semibold">{company.name}</h1>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {companySessions.length} sessions completed
+                    {lastScore !== null ? ` · last score ${lastScore}` : ""}
+                  </p>
+                </>
+              )}
             </div>
             <button
               type="button"
@@ -363,7 +432,9 @@ export default function Dashboard() {
           {view === "weakspots" && (
             <WeakSpotsPanel
               sessions={storedSessions}
-              selectedCompanyName={company.name}
+              companyNames={COMPANIES.map((c) => c.name)}
+              filter={weakSpotsFilter}
+              onFilterChange={handleWeakSpotsFilterChange}
               onPractice={openRolePicker}
             />
           )}

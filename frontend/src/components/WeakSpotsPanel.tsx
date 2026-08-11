@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import {
   Session,
@@ -15,6 +14,9 @@ const RECENT_SLICE = 4;
 const MIN_TAG_HITS = 2;
 const MAX_SPOTS = 5;
 const MAX_EXAMPLE_LINKS = 2;
+
+/** "all" = every company; otherwise a company display name (e.g. "Amazon") */
+export type WeakSpotsFilter = "all" | string;
 
 /** Phase 3: one concrete drill per tag */
 export const DRILL_BY_TAG: Record<WeaknessTag, string> = {
@@ -50,8 +52,6 @@ export type WeakSpotSummary = {
   recentHits: number;
   olderHits: number;
 };
-
-type Scope = "all" | "company";
 
 function sortNewestFirst(sessions: Session[]): Session[] {
   return [...sessions].sort(
@@ -196,7 +196,11 @@ export function aggregateWeakSpots(sessions: Session[]): {
 
 interface Props {
   sessions: Session[];
-  selectedCompanyName: string;
+  /** Known companies shown as filter chips (order preserved) */
+  companyNames: string[];
+  /** Controlled filter: all companies, or one company name */
+  filter: WeakSpotsFilter;
+  onFilterChange: (filter: WeakSpotsFilter) => void;
   /** Opens start-practice flow so Weak Spots change what they do next */
   onPractice?: () => void;
 }
@@ -282,59 +286,93 @@ function SpotCard({
   );
 }
 
+function chipClass(active: boolean): string {
+  return `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+    active
+      ? "bg-gray-900 text-white"
+      : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+  }`;
+}
+
 export function WeakSpotsPanel({
   sessions,
-  selectedCompanyName,
+  companyNames,
+  filter,
+  onFilterChange,
   onPractice,
 }: Props) {
-  const [scope, setScope] = useState<Scope>("all");
+  const isCompanyFilter = filter !== "all";
+  const filterLabel = isCompanyFilter ? filter : "all companies";
 
-  const scopedSessions =
-    scope === "company"
-      ? sessions.filter(
-          (s) => s.company?.toLowerCase() === selectedCompanyName.toLowerCase()
-        )
-      : sessions;
+  const scopedSessions = isCompanyFilter
+    ? sessions.filter(
+        (s) => s.company?.toLowerCase() === filter.toLowerCase()
+      )
+    : sessions;
 
   const { ready, sessionCount, spots, improving } =
     aggregateWeakSpots(scopedSessions);
 
+  const allSessionCount = sessions.length;
+  const showAllHint =
+    isCompanyFilter && sessionCount < MIN_SESSIONS && allSessionCount >= MIN_SESSIONS;
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setScope("all")}
-          className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-            scope === "all"
-              ? "bg-gray-900 text-white"
-              : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-          }`}
-        >
-          All companies
-        </button>
-        <button
-          type="button"
-          onClick={() => setScope("company")}
-          className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-            scope === "company"
-              ? "bg-gray-900 text-white"
-              : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-          }`}
-        >
-          {selectedCompanyName} only
-        </button>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onFilterChange("all")}
+            className={chipClass(filter === "all")}
+            aria-pressed={filter === "all"}
+          >
+            All
+          </button>
+          {companyNames.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => onFilterChange(name)}
+              className={chipClass(
+                filter.toLowerCase() === name.toLowerCase()
+              )}
+              aria-pressed={filter.toLowerCase() === name.toLowerCase()}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-gray-500">
+          Showing: {filterLabel}
+          {ready || sessionCount > 0
+            ? ` · based on ${sessionCount} session${sessionCount === 1 ? "" : "s"}`
+            : ""}
+        </p>
       </div>
 
       {!ready && (
         <div className="rounded-xl border border-gray-200 bg-white p-6">
           <h2 className="text-sm font-medium text-gray-900 mb-2">Weak spots</h2>
           <p className="text-sm text-gray-500">
-            {scope === "company" ? (
+            {isCompanyFilter ? (
               <>
-                Complete at least {MIN_SESSIONS} practice sessions for{" "}
-                {selectedCompanyName} so we can find patterns on this track. You have{" "}
-                {sessionCount} so far.
+                Complete at least {MIN_SESSIONS} practice sessions for {filter} so
+                we can find patterns on this track. You have {sessionCount} so far.
+                {showAllHint ? (
+                  <>
+                    {" "}
+                    You already have enough sessions overall — switch to{" "}
+                    <button
+                      type="button"
+                      onClick={() => onFilterChange("all")}
+                      className="font-medium text-gray-900 underline underline-offset-2 hover:text-gray-700"
+                    >
+                      All
+                    </button>{" "}
+                    to see patterns across companies.
+                  </>
+                ) : null}
               </>
             ) : (
               <>
@@ -352,8 +390,22 @@ export function WeakSpotsPanel({
           <p className="text-sm text-gray-500">
             No recurring patterns yet in your last{" "}
             {Math.min(sessionCount, WINDOW_SIZE)} sessions
-            {scope === "company" ? ` for ${selectedCompanyName}` : ""}. We only flag
-            tags that show up more than once.
+            {isCompanyFilter ? ` for ${filter}` : ""}. We only flag tags that show
+            up more than once.
+            {isCompanyFilter && allSessionCount > sessionCount ? (
+              <>
+                {" "}
+                Try{" "}
+                <button
+                  type="button"
+                  onClick={() => onFilterChange("all")}
+                  className="font-medium text-gray-900 underline underline-offset-2 hover:text-gray-700"
+                >
+                  All
+                </button>{" "}
+                if you practiced other companies.
+              </>
+            ) : null}
           </p>
         </div>
       )}
@@ -364,8 +416,7 @@ export function WeakSpotsPanel({
             <h2 className="text-sm font-medium text-gray-900">Active weak spots</h2>
             <p className="text-xs text-gray-400 mt-1">
               Still showing up in recent sessions
-              {scope === "company" ? ` at ${selectedCompanyName}` : ""}. Do the drill,
-              then practice.
+              {isCompanyFilter ? ` at ${filter}` : ""}. Do the drill, then practice.
             </p>
           </div>
           <ul className="divide-y divide-gray-100">
