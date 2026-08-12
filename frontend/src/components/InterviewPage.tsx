@@ -3,10 +3,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Question, Session, normalizeWeaknessTags } from "../types";
+import { Question, Session, ROLES, normalizeWeaknessTags } from "../types";
 import { InterviewRecorder } from "../components/InterviewRecorder";
 import { saveSession } from "../lib/sessions";
 import { canonicalizeCompany } from "../lib/companies";
+
+function roleLabelFromId(roleId: string | null): string {
+  if (!roleId) return "Unknown";
+  return ROLES.find((r) => r.id === roleId)?.label ?? roleId;
+}
 
 function pickRandomQuestion(pool: Question[], excludeId?: string): Question | null {
   const candidates = excludeId ? pool.filter((q) => q.id !== excludeId) : pool;
@@ -69,8 +74,24 @@ export function InterviewPage() {
     setIsLoading(true);
 
     try {
+      if (!selectedQuestion) {
+        alert("No question selected. Please reload and try again.");
+        setIsLoading(false);
+        return;
+      }
+
+      const company = canonicalizeCompany(
+        selectedQuestion.company || companyFilter
+      );
+      const role =
+        ROLES.find((r) => r.id === selectedQuestion.role)?.label ??
+        roleLabelFromId(roleFilter);
+
       const formData = new FormData();
       formData.append("file", blob, "interview.webm");
+      formData.append("company", company);
+      formData.append("role", role);
+      formData.append("question", selectedQuestion.question);
 
       const response = await fetch("http://localhost:8000/process-video", {
         method: "POST",
@@ -91,23 +112,18 @@ export function InterviewPage() {
         weakness_tags: normalizeWeaknessTags(data.weakness_tags),
       };
 
-      if (selectedQuestion) {
-        const newSession: Session = {
-          id: Date.now().toString(),
-          questionId: selectedQuestion.id,
-          question: selectedQuestion.question,
-          // Prefer question company; fall back to URL slug (amazon → Amazon)
-          company: canonicalizeCompany(
-            selectedQuestion.company || companyFilter
-          ),
-          timestamp: new Date().toISOString(),
-          feedback,
-        };
-        saveSession(newSession);
-        // Replace interview URL so browser Back goes to dashboard, not a new question
-        router.replace(`/sessions/${newSession.id}`);
-        return;
-      }
+      const newSession: Session = {
+        id: Date.now().toString(),
+        questionId: selectedQuestion.id,
+        question: selectedQuestion.question,
+        company,
+        timestamp: new Date().toISOString(),
+        feedback,
+      };
+      saveSession(newSession);
+      // Replace interview URL so browser Back goes to dashboard, not a new question
+      router.replace(`/sessions/${newSession.id}`);
+      return;
     } catch (err) {
       console.error("Error processing video:", err);
       alert("Failed to communicate with the backend.");

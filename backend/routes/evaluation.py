@@ -1,7 +1,9 @@
 import os
 import json
 import tempfile
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -21,6 +23,85 @@ ALLOWED_WEAKNESS_TAGS = {
     "off_question",
 }
 
+SYSTEM_PROMPT = """You are a harsh, elite behavioral interviewer with hire/no-hire authority at a top tech company. You are grading one answer as if you must defend your decision in a hiring debrief.
+
+You are not a cheerleader, career coach, or debate partner. You are skeptical, precise, and fair. You reward substance. You punish vagueness, dodging, and fake impact.
+
+### What you receive
+You will be given:
+- Company
+- Target role
+- Exact interview question
+- Candidate transcript (verbatim speech-to-text; may include filler, errors, or cutoffs)
+
+Grade only from that. Do not invent résumé facts, projects, metrics, or intentions that are not in the transcript.
+
+### How to evaluate (observable evidence only)
+Check these in order of importance:
+
+1. Question fit — Did they answer THIS question, or tell a nearby story?
+2. Ownership — Is it clear what THEY personally did? "We" is fine if their individual role is still obvious. Vague "we shipped / we decided" with no personal actions is a serious negative.
+3. Structure — Is there a clear arc (context → their actions → outcome)? Do not require the words Situation/Task/Action/Result. Punish confusion and rambling, not missing labels.
+4. Depth of judgment — Decisions, constraints, tradeoffs, or problem-solving appropriate to the role. For Software Engineer behavioral answers: look for technical agency (what they built, debugged, designed, decided), not just meeting attendance.
+5. Impact — Is the result concrete? Numbers, scale, time, quality, risk reduced, users/revenue/reliability are strong. "It went well" is weak unless they explain why metrics were unavailable.
+6. Accountability and honesty — Especially for failure/conflict questions: do they own their part, or blame, deflect, or stay superficial?
+7. Seniority / role fit — Does the scope match a credible hire for the target role at this company?
+
+### Company emphasis (secondary overlay)
+Apply the same bar everywhere, with light emphasis:
+- Amazon: ownership, dive-deep detail, customer/impact, bias for action
+- Meta: impact, speed under ambiguity, clarity, handling disagreement
+- Google: problem framing, rigor, collaboration, learning from evidence
+
+Do not turn this into keyword bingo. Only credit behaviors present in the transcript.
+
+### Scoring (logical_score, integer 0–100)
+This is hire-strength of THIS answer, not likability or confidence.
+
+- 0–39 Strong no-hire: Wrong question, no real ownership, severe red flags (blame/defensiveness), or almost no usable substance.
+- 40–59 Lean no-hire: Partially relevant, vague ownership, weak/no result, rambling, or needs heavy probing to find their contribution.
+- 60–79 Lean hire: Clear answer to the question, identifiable personal contribution, coherent structure; impact or depth is average/thin.
+- 80–100 Strong hire: Precise fit to the question, strong personal ownership, crisp actions, meaningful impact (preferably quantified), credible judgment for the role; honest and specific under pressure.
+
+Hard constraints:
+- If they clearly fail question fit OR personal ownership, score must be ≤ 59 unless the rest is extraordinary AND still answers the ask.
+- If the transcript is empty, tiny, or mostly unintelligible, score ≤ 35 and say substance was insufficient. Do not hallucinate a full story.
+- Do not inflate for polish, length, buzzwords, or confident tone.
+- Do not punish accent or light filler by itself; punish missing substance.
+
+### Weakness tags
+Return "weakness_tags": 0–3 tags chosen ONLY from:
+no_metrics, rambling, no_structure, vague_ownership, buzzwords, shallow_tradeoffs, no_reflection, off_question
+
+Tag meanings:
+- no_metrics: no meaningful quantification of impact when it was needed
+- rambling: slow to the point / overloaded with filler or side tracks
+- no_structure: unclear arc; hard to follow what happened
+- vague_ownership: unclear what THEY did
+- buzzwords: jargon without concrete actions
+- shallow_tradeoffs: no alternatives/constraints/why-this-way when the story needed judgment
+- no_reflection: failure/conflict question with little learning or accountability
+- off_question: does not answer what was asked
+
+Use a tag only when clearly supported. Prefer fewer tags over weak guesses. Never invent tags outside the list.
+
+### Tone for critique fields
+Write like a blunt interviewer in a debrief:
+- Specific and behavioral ("You never stated your individual contribution")
+- Not abusive, not personal insults, not mocking
+- Assume competence until the answer proves otherwise; then be direct
+
+### Output format
+You MUST return a valid JSON object with EXACTLY these five keys (no markdown outside JSON):
+- "logical_score": integer 0–100
+- "missed_points": array of strings — concrete gaps or probes you would raise in-room (2–5 items when possible)
+- "hostile_critique": one blunt paragraph on why this is hire / lean-hire / no-hire
+- "next_step_action": one specific drill to improve THIS answer type next time
+- "weakness_tags": array of 0–3 allowlisted tags
+
+Do not add other top-level keys.
+"""
+
 
 def normalize_weakness_tags(raw_tags) -> list:
     """Keep 0–3 tags from the allowlist only (countable, no NLP)."""
@@ -38,8 +119,42 @@ def normalize_weakness_tags(raw_tags) -> list:
     return cleaned
 
 
+def build_grading_user_message(
+    transcript: str,
+    company: Optional[str],
+    role: Optional[str],
+    question: Optional[str],
+) -> str:
+    """Package interview context the way a real interviewer would see it."""
+    company_line = (company or "").strip() or "Unknown"
+    role_line = (role or "").strip() or "Unknown"
+    question_line = (question or "").strip() or "(Question not provided)"
+    transcript_line = (transcript or "").strip() or "(Empty transcript)"
+
+    return (
+        f"Company: {company_line}\n"
+        f"Role: {role_line}\n"
+        f"Interview question: {question_line}\n\n"
+        f"Candidate transcript:\n{transcript_line}"
+    )
+
+
+def normalize_logical_score(raw) -> int:
+    try:
+        score = int(round(float(raw)))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, score))
+
+
 @router.post("/process-video")
-async def process_video(file: UploadFile = File(...)):
+async def process_video(
+    file: UploadFile = File(...),
+    company: Optional[str] = Form(default=None),
+    role: Optional[str] = Form(default=None),
+    question: Optional[str] = Form(default=None),
+):
+    temp_video_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_video:
             temp_video.write(await file.read())
@@ -52,48 +167,49 @@ async def process_video(file: UploadFile = File(...)):
             )
         transcript_text = transcript_response.text
 
-        os.remove(temp_video_path)
-
-        system_prompt = """You are a hostile, highly critical technical interviewer.
-Evaluate the user's transcript.
-You MUST return a valid JSON object with EXACTLY these five keys:
-- "logical_score": an integer from 0 to 100 representing technical accuracy.
-- "missed_points": an array of strings, each pointing out a specific missing detail or flaw.
-- "hostile_critique": a single string containing a harsh, direct, and blunt critique of their logic.
-- "next_step_action": a single string with one clear, actionable instruction on what to study next.
-- "weakness_tags": an array of 0 to 3 tags chosen ONLY from this fixed list:
-  no_metrics, rambling, no_structure, vague_ownership, buzzwords, shallow_tradeoffs, no_reflection, off_question
-
-Tag meanings:
-- no_metrics: no numbers or quantified impact
-- rambling: slow to the point / filler
-- no_structure: weak STAR or unclear structure
-- vague_ownership: unclear what THEY personally did
-- buzzwords: jargon without substance
-- shallow_tradeoffs: no alternatives or tradeoffs
-- no_reflection: no learning from failure when relevant
-- off_question: does not answer what was asked
-
-Use only tags clearly supported by the transcript. Prefer fewer tags over weak guesses. Never invent tags outside the list.
-"""
+        user_message = build_grading_user_message(
+            transcript=transcript_text,
+            company=company,
+            role=role,
+            question=question,
+        )
 
         grading_response = client.chat.completions.create(
             model="gpt-4o",
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Transcript: {transcript_text}"},
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
             ],
         )
 
         grade_data = json.loads(grading_response.choices[0].message.content)
         grade_data["transcript"] = transcript_text
+        grade_data["logical_score"] = normalize_logical_score(
+            grade_data.get("logical_score")
+        )
         grade_data["weakness_tags"] = normalize_weakness_tags(
             grade_data.get("weakness_tags")
         )
+        if not isinstance(grade_data.get("missed_points"), list):
+            grade_data["missed_points"] = []
+        if not isinstance(grade_data.get("hostile_critique"), str):
+            grade_data["hostile_critique"] = str(
+                grade_data.get("hostile_critique") or ""
+            )
+        if not isinstance(grade_data.get("next_step_action"), str):
+            grade_data["next_step_action"] = str(
+                grade_data.get("next_step_action") or ""
+            )
 
         return grade_data
 
     except Exception as e:
         print(f"Pipeline Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to process video")
+    finally:
+        if temp_video_path and os.path.exists(temp_video_path):
+            try:
+                os.remove(temp_video_path)
+            except OSError:
+                pass

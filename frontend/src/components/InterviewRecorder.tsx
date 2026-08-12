@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Question } from "../types";
 import { useVideoRecorder } from "../hooks/useVideoRecorder";
@@ -21,14 +21,18 @@ export function InterviewRecorder({ question, onSubmit, onTryDifferent }: Props)
     initializeWebcam,
   } = useVideoRecorder();
 
+  /** Hide preview the instant Submit is pressed (don't wait for React unmount) */
+  const [previewOff, setPreviewOff] = useState(false);
+
   useEffect(() => {
     void initializeWebcam();
   }, [initializeWebcam]);
 
   const handleSubmit = () => {
     if (!recordedBlob) return;
-    // Stop tracks before parent swaps this screen for the loading state
+    // Turn camera/mic off immediately on click — before AI upload/analysis starts
     stopWebcam();
+    setPreviewOff(true);
     onSubmit(recordedBlob);
   };
 
@@ -54,13 +58,19 @@ export function InterviewRecorder({ question, onSubmit, onTryDifferent }: Props)
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full aspect-video bg-gray-900 object-cover"
-          />
+          {previewOff ? (
+            <div className="w-full aspect-video bg-gray-900 flex items-center justify-center">
+              <p className="text-sm text-gray-400">Camera off</p>
+            </div>
+          ) : (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full aspect-video bg-gray-900 object-cover"
+            />
+          )}
         </div>
 
         <div className="grid grid-cols-3 gap-3 items-center">

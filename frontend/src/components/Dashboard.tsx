@@ -20,6 +20,7 @@ import {
   hasActiveWeakSpots,
   type WeakSpotsFilter,
 } from "./WeakSpotsPanel";
+import { DeviceCheckPanel } from "./DeviceCheckPanel";
 import { OTHER_COMPANY } from "../lib/companies";
 import {
   computeCompanyProgress,
@@ -362,6 +363,13 @@ export default function Dashboard() {
                     {company.name}.
                   </p>
                 </>
+              ) : view === "settings" ? (
+                <>
+                  <h1 className="text-2xl font-semibold">Settings</h1>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Check your mic and camera before a practice session.
+                  </p>
+                </>
               ) : (
                 <>
                   <h1 className="text-2xl font-semibold">{company.name}</h1>
@@ -448,14 +456,7 @@ export default function Dashboard() {
             />
           )}
 
-          {view === "settings" && (
-            <div className="rounded-xl border border-gray-200 bg-white p-6">
-              <h2 className="text-sm font-medium text-gray-900 mb-3">Settings</h2>
-              <p className="text-sm text-gray-400">
-                Mic/camera permissions and auditor difficulty go here.
-              </p>
-            </div>
-          )}
+          {view === "settings" && <DeviceCheckPanel />}
         </div>
       </main>
 

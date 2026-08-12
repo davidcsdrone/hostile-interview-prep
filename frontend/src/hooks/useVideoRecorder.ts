@@ -1,4 +1,31 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+
+function stopStreamTracks(stream: MediaStream | null | undefined) {
+  if (!stream) return;
+  stream.getTracks().forEach((track) => {
+    try {
+      track.stop();
+    } catch {
+      // ignore
+    }
+  });
+}
+
+function detachVideo(video: HTMLVideoElement | null) {
+  if (!video) return;
+  const src = video.srcObject;
+  if (src instanceof MediaStream) {
+    stopStreamTracks(src);
+  }
+  video.pause();
+  video.srcObject = null;
+  // Force the element to drop any remaining media resources
+  try {
+    video.load();
+  } catch {
+    // ignore
+  }
+}
 
 export function useVideoRecorder() {
   const [isRecording, setIsRecording] = useState(false);
@@ -15,7 +42,18 @@ export function useVideoRecorder() {
    */
   const aliveRef = useRef(true);
 
+  /** Release camera/mic immediately — tracks first, then recorder/video element */
   const stopWebcam = useCallback(() => {
+    const stream = streamRef.current;
+    streamRef.current = null;
+
+    // 1) Stop hardware tracks first (this is what turns off the camera indicator)
+    stopStreamTracks(stream);
+
+    // 2) Also kill whatever is still attached to the <video> (can diverge from streamRef)
+    detachVideo(videoRef.current);
+
+    // 3) Tear down recorder after tracks are dead
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       try {
         mediaRecorderRef.current.stop();
@@ -25,22 +63,12 @@ export function useVideoRecorder() {
     }
     mediaRecorderRef.current = null;
     setIsRecording(false);
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
   }, []);
 
   const initializeWebcam = useCallback(async () => {
     try {
-      // Avoid leaving an old stream on if this is called again
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
+        stopStreamTracks(streamRef.current);
         streamRef.current = null;
       }
 
@@ -50,9 +78,8 @@ export function useVideoRecorder() {
       });
 
       // User left (or remounted) while the permission/stream request was in flight.
-      // Stop immediately — otherwise the camera stays on with nothing to clean it up.
       if (!aliveRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
+        stopStreamTracks(stream);
         return;
       }
 
@@ -62,7 +89,6 @@ export function useVideoRecorder() {
         videoRef.current.srcObject = stream;
       }
     } catch (error) {
-      // Permission denied / device busy — only log if we still care
       if (aliveRef.current) {
         console.error("Error accessing webcam:", error);
       }
@@ -118,8 +144,8 @@ export function useVideoRecorder() {
     }
   }, [timeRemaining, isRecording]);
 
-  // Mark alive on mount; kill camera/mic on unmount (Back, submit → loading, leave page)
-  useEffect(() => {
+  // useLayoutEffect: kill media before the browser paints the next screen
+  useLayoutEffect(() => {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
