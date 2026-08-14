@@ -1,7 +1,10 @@
+"use client";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Question } from "../types";
 import { useVideoRecorder } from "../hooks/useVideoRecorder";
+import { getRecordingDuration } from "../lib/recordingDuration";
 
 interface Props {
   question: Question;
@@ -10,16 +13,23 @@ interface Props {
 }
 
 export function InterviewRecorder({ question, onSubmit, onTryDifferent }: Props) {
+  const [maxSeconds, setMaxSeconds] = useState(120);
+
+  useEffect(() => {
+    setMaxSeconds(getRecordingDuration());
+  }, []);
+
   const {
     isRecording,
     timeRemaining,
     videoRef,
     recordedBlob,
+    mediaError,
     startRecording,
     stopRecording,
     stopWebcam,
     initializeWebcam,
-  } = useVideoRecorder();
+  } = useVideoRecorder(maxSeconds);
 
   /** Hide preview the instant Submit is pressed (don't wait for React unmount) */
   const [previewOff, setPreviewOff] = useState(false);
@@ -30,10 +40,13 @@ export function InterviewRecorder({ question, onSubmit, onTryDifferent }: Props)
 
   const handleSubmit = () => {
     if (!recordedBlob) return;
-    // Turn camera/mic off immediately on click — before AI upload/analysis starts
+    const blob = recordedBlob;
+
+    // Stop hardware BEFORE hiding the <video> or unmounting into the loading screen.
+    // Hiding the preview alone does not turn the camera off.
     stopWebcam();
     setPreviewOff(true);
-    onSubmit(recordedBlob);
+    onSubmit(blob);
   };
 
   const handleTryDifferent = () => {
@@ -54,13 +67,30 @@ export function InterviewRecorder({ question, onSubmit, onTryDifferent }: Props)
             The interviewer at {question.company} asks...
           </p>
           <h2 className="text-xl font-semibold text-gray-900">{question.question}</h2>
-          <p className="text-sm text-gray-400 mt-3">{timeRemaining}s remaining</p>
+          <p className="text-sm text-gray-400 mt-3">
+            {isRecording
+              ? `${timeRemaining}s remaining`
+              : `${maxSeconds}s recording limit`}
+          </p>
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
           {previewOff ? (
             <div className="w-full aspect-video bg-gray-900 flex items-center justify-center">
               <p className="text-sm text-gray-400">Camera off</p>
+            </div>
+          ) : mediaError ? (
+            <div className="w-full aspect-video bg-gray-900 flex flex-col items-center justify-center gap-3 px-6 text-center">
+              <p className="text-sm text-gray-300 leading-relaxed">{mediaError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  void initializeWebcam();
+                }}
+                className="rounded-lg bg-white text-gray-900 px-4 py-2 text-sm font-medium hover:bg-gray-100 transition-colors"
+              >
+                Enable camera
+              </button>
             </div>
           ) : (
             <video

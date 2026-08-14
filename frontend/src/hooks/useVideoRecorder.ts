@@ -19,7 +19,6 @@ function detachVideo(video: HTMLVideoElement | null) {
   }
   video.pause();
   video.srcObject = null;
-  // Force the element to drop any remaining media resources
   try {
     video.load();
   } catch {
@@ -27,13 +26,19 @@ function detachVideo(video: HTMLVideoElement | null) {
   }
 }
 
-export function useVideoRecorder() {
+/**
+ * @param maxSeconds Full allotment for each take (from Settings). Defaults to 120.
+ */
+export function useVideoRecorder(maxSeconds: number = 120) {
   const [isRecording, setIsRecording] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState(120);
+  const [timeRemaining, setTimeRemaining] = useState(maxSeconds);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const maxSecondsRef = useRef(maxSeconds);
+  maxSecondsRef.current = maxSeconds;
 
   /**
    * True while this hook instance is mounted.
@@ -42,8 +47,17 @@ export function useVideoRecorder() {
    */
   const aliveRef = useRef(true);
 
-  /** Release camera/mic immediately — tracks first, then recorder/video element */
+  /**
+   * Bumped on every init and every stop. Late getUserMedia results with a
+   * stale id are stopped immediately (Strict Mode double-mount safe).
+   */
+  const mediaEpochRef = useRef(0);
+
+  /** Release camera/mic immediately: tracks first, then recorder/video element */
   const stopWebcam = useCallback(() => {
+    // Invalidate any in-flight getUserMedia so it cannot re-attach after stop
+    mediaEpochRef.current += 1;
+
     const stream = streamRef.current;
     streamRef.current = null;
 
@@ -66,10 +80,20 @@ export function useVideoRecorder() {
   }, []);
 
   const initializeWebcam = useCallback(async () => {
+    const epoch = ++mediaEpochRef.current;
+    setMediaError(null);
+
+    // Drop any current stream before opening a new one
+    if (streamRef.current) {
+      stopStreamTracks(streamRef.current);
+      streamRef.current = null;
+    }
+    detachVideo(videoRef.current);
+
     try {
-      if (streamRef.current) {
-        stopStreamTracks(streamRef.current);
-        streamRef.current = null;
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMediaError("Camera/mic are not available in this browser.");
+        return;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -77,10 +101,15 @@ export function useVideoRecorder() {
         audio: true,
       });
 
-      // User left (or remounted) while the permission/stream request was in flight.
-      if (!aliveRef.current) {
+      // Stopped, superseded by a newer init, or unmounted while waiting
+      if (!aliveRef.current || epoch !== mediaEpochRef.current) {
         stopStreamTracks(stream);
         return;
+      }
+
+      // Never overwrite a live streamRef without stopping it
+      if (streamRef.current && streamRef.current !== stream) {
+        stopStreamTracks(streamRef.current);
       }
 
       streamRef.current = stream;
@@ -89,17 +118,51 @@ export function useVideoRecorder() {
         videoRef.current.srcObject = stream;
       }
     } catch (error) {
-      if (aliveRef.current) {
-        console.error("Error accessing webcam:", error);
+      if (!aliveRef.current || epoch !== mediaEpochRef.current) return;
+
+      const name =
+        error && typeof error === "object" && "name" in error
+          ? String((error as { name?: string }).name)
+          : "";
+
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setMediaError(
+          "Camera/mic permission was blocked. Allow access in the browser address bar, then click Enable camera."
+        );
+      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        setMediaError("No camera or microphone was found. Plug one in and try again.");
+      } else if (name === "NotReadableError" || name === "TrackStartError") {
+        setMediaError(
+          "Camera/mic is busy in another app or tab. Close it, then click Enable camera."
+        );
+      } else {
+        setMediaError("Could not start camera/mic. Click Enable camera to try again.");
       }
+      console.error("Error accessing webcam:", error);
     }
   }, []);
 
-  const startRecording = () => {
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    // Ready for another full take
+    setTimeRemaining(maxSecondsRef.current);
+  }, []);
+
+  const startRecording = useCallback(() => {
     if (!streamRef.current) return;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      return;
+    }
 
     const mediaRecorder = new MediaRecorder(streamRef.current, {
       mimeType: "video/webm;codecs=vp8,opus",
+      // Keep uploads smaller for longer answers (Whisper has a 25MB limit on the raw file path;
+      // backend also extracts audio, but leaner video still helps upload time).
+      videoBitsPerSecond: 600_000,
+      audioBitsPerSecond: 64_000,
     });
 
     const chunks: Blob[] = [];
@@ -116,23 +179,25 @@ export function useVideoRecorder() {
       setRecordedBlob(blob);
     };
 
+    // Always start a fresh full allotment (fixes leftover seconds after early stop)
+    setTimeRemaining(maxSecondsRef.current);
     mediaRecorder.start();
     mediaRecorderRef.current = mediaRecorder;
     setIsRecording(true);
-  };
+  }, []);
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+  // Keep idle display in sync if Settings length changes before/after a take
+  useEffect(() => {
+    if (!isRecording) {
+      setTimeRemaining(maxSeconds);
     }
-  };
+  }, [maxSeconds, isRecording]);
 
   useEffect(() => {
     if (!isRecording) return;
 
     const interval = setInterval(() => {
-      setTimeRemaining((prev) => prev - 1);
+      setTimeRemaining((prev) => Math.max(0, prev - 1));
     }, 1000);
 
     return () => clearInterval(interval);
@@ -142,7 +207,7 @@ export function useVideoRecorder() {
     if (timeRemaining <= 0 && isRecording) {
       stopRecording();
     }
-  }, [timeRemaining, isRecording]);
+  }, [timeRemaining, isRecording, stopRecording]);
 
   // useLayoutEffect: kill media before the browser paints the next screen
   useLayoutEffect(() => {
@@ -156,6 +221,8 @@ export function useVideoRecorder() {
   return {
     isRecording,
     timeRemaining,
+    maxSeconds,
+    mediaError,
     videoRef,
     recordedBlob,
     startRecording,

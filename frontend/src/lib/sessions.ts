@@ -53,3 +53,50 @@ export function saveSession(newSession: Session): Session[] {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
   return existing;
 }
+
+/**
+ * Wipe all practice sessions from this browser.
+ * Preferences (grader tone, Weak Spots filter) are left alone.
+ * Returns how many sessions were removed.
+ */
+export function clearSessions(): { removed: number } {
+  if (typeof window === "undefined") return { removed: 0 };
+
+  const before = getSessions().length;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // If remove fails, force empty list so UI can still recover
+    try {
+      window.localStorage.setItem(STORAGE_KEY, "[]");
+    } catch {
+      return { removed: 0 };
+    }
+  }
+
+  // Verify read-path sees empty data (guards against quota/odd storage quirks)
+  const after = getSessions().length;
+  if (after !== 0) {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, "[]");
+    } catch {
+      return { removed: 0 };
+    }
+  }
+
+  return { removed: before };
+}
+
+/** True if the sessions key exists (including empty/corrupt payloads). */
+export function hasSessionsKey(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+export function getSessionCount(): number {
+  return getSessions().length;
+}

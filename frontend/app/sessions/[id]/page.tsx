@@ -4,20 +4,45 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Session } from "../../../src/types";
-import { getSessionById } from "../../../src/lib/sessions";
+import { getPracticeSessionById } from "../../../src/lib/practiceSessionsDb";
 import { FeedbackDisplay } from "../../../src/components/FeedbackDisplay";
 
 export default function SessionDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!id) {
-      setSession(null);
-      return;
-    }
-    setSession(getSessionById(id));
+    let cancelled = false;
+
+    const load = async () => {
+      if (!id) {
+        setSession(null);
+        return;
+      }
+
+      setSession(undefined);
+      setError(null);
+
+      try {
+        const found = await getPracticeSessionById(id);
+        if (!cancelled) setSession(found);
+      } catch (err) {
+        console.error("Failed to load session", err);
+        if (!cancelled) {
+          setSession(null);
+          setError(
+            err instanceof Error ? err.message : "Failed to load this session."
+          );
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   if (session === undefined) {
@@ -37,7 +62,8 @@ export default function SessionDetailPage() {
           </Link>
           <div className="rounded-xl border border-gray-200 bg-white p-6">
             <p className="text-sm text-gray-600">
-              Session not found. It may have been cleared from this browser.
+              {error ??
+                "Session not found. It may belong to another account, or it was deleted."}
             </p>
           </div>
         </div>

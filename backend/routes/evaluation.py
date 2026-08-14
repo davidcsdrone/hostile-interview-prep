@@ -23,9 +23,10 @@ ALLOWED_WEAKNESS_TAGS = {
     "off_question",
 }
 
-SYSTEM_PROMPT = """You are a harsh, elite behavioral interviewer with hire/no-hire authority at a top tech company. You are grading one answer as if you must defend your decision in a hiring debrief.
+# Shared hire-bar rubric — tone only changes voice, not scoring strictness
+SYSTEM_PROMPT_CORE = """You are an elite behavioral interviewer with hire/no-hire authority at a top tech company. You are grading one answer as if you must defend your decision in a hiring debrief.
 
-You are not a cheerleader, career coach, or debate partner. You are skeptical, precise, and fair. You reward substance. You punish vagueness, dodging, and fake impact.
+You reward substance. You punish vagueness, dodging, and fake impact. Scoring rigor does not change with tone.
 
 ### What you receive
 You will be given:
@@ -68,6 +69,7 @@ Hard constraints:
 - If the transcript is empty, tiny, or mostly unintelligible, score ≤ 35 and say substance was insufficient. Do not hallucinate a full story.
 - Do not inflate for polish, length, buzzwords, or confident tone.
 - Do not punish accent or light filler by itself; punish missing substance.
+- Do not raise or lower the score because the feedback tone is softer or harsher.
 
 ### Weakness tags
 Return "weakness_tags": 0–3 tags chosen ONLY from:
@@ -85,23 +87,49 @@ Tag meanings:
 
 Use a tag only when clearly supported. Prefer fewer tags over weak guesses. Never invent tags outside the list.
 
-### Tone for critique fields
-Write like a blunt interviewer in a debrief:
-- Specific and behavioral ("You never stated your individual contribution")
-- Not abusive, not personal insults, not mocking
-- Assume competence until the answer proves otherwise; then be direct
-
 ### Output format
 You MUST return a valid JSON object with EXACTLY these five keys (no markdown outside JSON):
 - "logical_score": integer 0–100
 - "missed_points": array of strings — concrete gaps or probes you would raise in-room (2–5 items when possible)
-- "hostile_critique": one blunt paragraph on why this is hire / lean-hire / no-hire
+- "hostile_critique": one paragraph on why this is hire / lean-hire / no-hire (voice follows the Tone section)
 - "next_step_action": one specific drill to improve THIS answer type next time
 - "weakness_tags": array of 0–3 allowlisted tags
 
 Do not add other top-level keys.
 """
 
+TONE_HARSH = """### Tone for critique fields
+Write like a blunt interviewer in a debrief:
+- Specific and behavioral ("You never stated your individual contribution")
+- Skeptical and severe where the answer fails the bar
+- Not abusive, not personal insults, not mocking
+- Assume competence until the answer proves otherwise; then be direct and unsoftened
+"""
+
+TONE_SOFT = """### Tone for critique fields
+Write like a direct, professional interviewer who is still honest about hire/no-hire:
+- Specific and behavioral — name what was missing or strong
+- Clear and firm, but not cutting or theatrical
+- No sugarcoating of a weak answer; no fake praise
+- Prefer plain language over harsh rhetorical punches
+- Still state the hire implication clearly (strong no / lean no / lean yes / strong yes)
+"""
+
+
+def normalize_tone(raw: Optional[str]) -> str:
+    """Map client tone to harsh|soft. Default harsh."""
+    if not raw:
+        return "harsh"
+    key = raw.strip().lower()
+    if key in {"soft", "softer", "direct", "direct_soft", "direct-but-softer"}:
+        return "soft"
+    return "harsh"
+
+
+def build_system_prompt(tone: Optional[str] = None) -> str:
+    normalized = normalize_tone(tone)
+    tone_block = TONE_SOFT if normalized == "soft" else TONE_HARSH
+    return f"{SYSTEM_PROMPT_CORE}\n{tone_block}"
 
 def normalize_weakness_tags(raw_tags) -> list:
     """Keep 0–3 tags from the allowlist only (countable, no NLP)."""
@@ -153,19 +181,41 @@ async def process_video(
     company: Optional[str] = Form(default=None),
     role: Optional[str] = Form(default=None),
     question: Optional[str] = Form(default=None),
+    tone: Optional[str] = Form(default=None),
 ):
     temp_video_path = None
+    temp_audio_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_video:
             temp_video.write(await file.read())
             temp_video_path = temp_video.name
 
-        with open(temp_video_path, "rb") as audio_file:
+        # Whisper rejects >25MB uploads. Webcam video easily exceeds that after ~60s.
+        # Extract compact speech audio first, then transcribe.
+        from services.video_processor import (
+            AudioExtractionError,
+            ensure_under_whisper_limit,
+            extract_speech_audio,
+        )
+
+        try:
+            temp_audio_path = extract_speech_audio(temp_video_path)
+            ensure_under_whisper_limit(temp_audio_path)
+        except AudioExtractionError as extract_err:
+            raise HTTPException(status_code=400, detail=str(extract_err)) from extract_err
+
+        with open(temp_audio_path, "rb") as audio_file:
             transcript_response = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
             )
         transcript_text = transcript_response.text
+
+        if not transcript_text or not str(transcript_text).strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Transcription was empty. Speak closer to the mic and try again.",
+            )
 
         user_message = build_grading_user_message(
             transcript=transcript_text,
@@ -178,7 +228,7 @@ async def process_video(
             model="gpt-4o",
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": build_system_prompt(tone)},
                 {"role": "user", "content": user_message},
             ],
         )
@@ -204,12 +254,25 @@ async def process_video(
 
         return grade_data
 
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Pipeline Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to process video")
+        message = str(e)
+        print(f"Pipeline Error: {message}")
+        lower = message.lower()
+        if "413" in message or "maximum content size" in lower:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "Recording is too large for transcription. Try a shorter answer "
+                    "or lower recording length in Settings."
+                ),
+            ) from e
+        raise HTTPException(status_code=500, detail="Failed to process video") from e
     finally:
-        if temp_video_path and os.path.exists(temp_video_path):
-            try:
-                os.remove(temp_video_path)
-            except OSError:
-                pass
+        for path in (temp_video_path, temp_audio_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass

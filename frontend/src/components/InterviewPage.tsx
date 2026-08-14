@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Question, Session, ROLES, normalizeWeaknessTags } from "../types";
+import { Question, ROLES, normalizeWeaknessTags } from "../types";
 import { InterviewRecorder } from "../components/InterviewRecorder";
-import { saveSession } from "../lib/sessions";
+import { savePracticeSession } from "../lib/practiceSessionsDb";
 import { canonicalizeCompany } from "../lib/companies";
+import { getGraderTone } from "../lib/graderTone";
 
 function roleLabelFromId(roleId: string | null): string {
   if (!roleId) return "Unknown";
@@ -92,6 +93,7 @@ export function InterviewPage() {
       formData.append("company", company);
       formData.append("role", role);
       formData.append("question", selectedQuestion.question);
+      formData.append("tone", getGraderTone());
 
       const response = await fetch("http://localhost:8000/process-video", {
         method: "POST",
@@ -99,9 +101,17 @@ export function InterviewPage() {
       });
 
       if (!response.ok) {
-        alert(
-          "The server crashed while processing the video. Check your Python terminal for the exact error."
-        );
+        let detail =
+          "The server failed while processing the video. Check your Python terminal for the exact error.";
+        try {
+          const errBody = await response.json();
+          if (typeof errBody?.detail === "string" && errBody.detail.trim()) {
+            detail = errBody.detail;
+          }
+        } catch {
+          // keep fallback detail
+        }
+        alert(detail);
         setIsLoading(false);
         return;
       }
@@ -112,17 +122,26 @@ export function InterviewPage() {
         weakness_tags: normalizeWeaknessTags(data.weakness_tags),
       };
 
-      const newSession: Session = {
-        id: Date.now().toString(),
-        questionId: selectedQuestion.id,
-        question: selectedQuestion.question,
-        company,
-        timestamp: new Date().toISOString(),
-        feedback,
-      };
-      saveSession(newSession);
+      let saved;
+      try {
+        saved = await savePracticeSession({
+          questionId: selectedQuestion.id,
+          question: selectedQuestion.question,
+          company,
+          role,
+          feedback,
+        });
+      } catch (saveErr) {
+        console.error("Failed to save practice session", saveErr);
+        alert(
+          "Grading succeeded, but saving to your account failed. Check that you are logged in and try again."
+        );
+        setIsLoading(false);
+        return;
+      }
+
       // Replace interview URL so browser Back goes to dashboard, not a new question
-      router.replace(`/sessions/${newSession.id}`);
+      router.replace(`/sessions/${saved.id}`);
       return;
     } catch (err) {
       console.error("Error processing video:", err);

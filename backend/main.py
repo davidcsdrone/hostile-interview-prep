@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
 from dotenv import load_dotenv
-from routes import questions, evaluation
+from routes import questions, evaluation, account
 
 load_dotenv()
 client = anthropic.Anthropic(
@@ -22,11 +22,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"], 
     allow_headers=["*"]  
- 
+  
 )
 
 app.include_router(questions.router) 
 app.include_router(evaluation.router)
+app.include_router(account.router)
 
 @app.get("/")
 def health_check():

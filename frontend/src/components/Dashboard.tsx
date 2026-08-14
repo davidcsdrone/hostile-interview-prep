@@ -14,13 +14,20 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ROLES, type RoleId, type Session } from "../types";
-import { getSessions } from "../lib/sessions";
+import { listPracticeSessions } from "../lib/practiceSessionsDb";
 import {
   WeakSpotsPanel,
   hasActiveWeakSpots,
   type WeakSpotsFilter,
 } from "./WeakSpotsPanel";
 import { DeviceCheckPanel } from "./DeviceCheckPanel";
+import { GraderToneSettings } from "./GraderToneSettings";
+import { RecordingDurationSettings } from "./RecordingDurationSettings";
+import { ExportSessionsSettings } from "./ExportSessionsSettings";
+import { ClearLocalDataSettings } from "./ClearLocalDataSettings";
+import { DeleteAccountSettings } from "./DeleteAccountSettings";
+import { AboutSettings } from "./AboutSettings";
+import { AuthAccountBar } from "./AuthAccountBar";
 import { OTHER_COMPANY } from "../lib/companies";
 import {
   computeCompanyProgress,
@@ -150,6 +157,8 @@ function Sidebar({
           );
         })}
       </div>
+
+      <AuthAccountBar />
     </aside>
   );
 }
@@ -245,11 +254,30 @@ export default function Dashboard() {
   const [showRolePicker, setShowRolePicker] = useState(false);
   const [selectedRole, setSelectedRole] = useState<RoleId>("software-engineer");
   const [storedSessions, setStoredSessions] = useState<Session[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [weakSpotsFilter, setWeakSpotsFilter] = useState<WeakSpotsFilter>("all");
+
+  const reloadSessions = async () => {
+    setSessionsLoading(true);
+    setSessionsError(null);
+    try {
+      const sessions = await listPracticeSessions();
+      setStoredSessions(sessions);
+    } catch (err) {
+      console.error("Failed to load practice sessions", err);
+      setStoredSessions([]);
+      setSessionsError(
+        err instanceof Error ? err.message : "Failed to load practice history."
+      );
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
 
   // Reload whenever you land on the dashboard (e.g. after finishing practice)
   useEffect(() => {
-    setStoredSessions(getSessions());
+    void reloadSessions();
   }, [pathname]);
 
   // Restore Weak Spots company filter after mount (localStorage)
@@ -367,15 +395,18 @@ export default function Dashboard() {
                 <>
                   <h1 className="text-2xl font-semibold">Settings</h1>
                   <p className="text-sm text-gray-500 mt-1">
-                    Check your mic and camera before a practice session.
+                    Devices, feedback tone, recording length, local data, and about the app.
                   </p>
                 </>
               ) : (
                 <>
                   <h1 className="text-2xl font-semibold">{company.name}</h1>
                   <p className="text-sm text-gray-500 mt-1">
-                    {companySessions.length} sessions completed
-                    {lastScore !== null ? ` · last score ${lastScore}` : ""}
+                    {sessionsLoading
+                      ? "Loading sessions…"
+                      : `${companySessions.length} sessions completed${
+                          lastScore !== null ? ` · last score ${lastScore}` : ""
+                        }`}
                   </p>
                 </>
               )}
@@ -389,6 +420,12 @@ export default function Dashboard() {
               Start practice
             </button>
           </div>
+
+          {sessionsError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              {sessionsError}
+            </div>
+          ) : null}
 
           {view === "companies" && (
             <>
@@ -431,7 +468,11 @@ export default function Dashboard() {
                 </div>
                 <SessionList
                   sessions={recentCompanySessions}
-                  emptyText={`No sessions yet for ${company.name}. Complete a practice to see history here.`}
+                  emptyText={
+                    sessionsLoading
+                      ? "Loading sessions…"
+                      : `No sessions yet for ${company.name}. Complete a practice to see history here.`
+                  }
                 />
               </div>
             </>
@@ -442,7 +483,10 @@ export default function Dashboard() {
               <div className="px-6 py-4 border-b border-gray-100">
                 <h2 className="text-sm font-medium text-gray-900">All sessions</h2>
               </div>
-              <SessionList sessions={storedSessions} emptyText="No sessions yet." />
+              <SessionList
+                sessions={storedSessions}
+                emptyText={sessionsLoading ? "Loading sessions…" : "No sessions yet."}
+              />
             </div>
           )}
 
@@ -456,7 +500,22 @@ export default function Dashboard() {
             />
           )}
 
-          {view === "settings" && <DeviceCheckPanel />}
+          {view === "settings" && (
+            <div className="space-y-4">
+              <DeviceCheckPanel />
+              <GraderToneSettings />
+              <RecordingDurationSettings />
+              <ExportSessionsSettings sessionCount={storedSessions.length} />
+              <ClearLocalDataSettings
+                sessionCount={storedSessions.length}
+                onCleared={() => {
+                  void reloadSessions();
+                }}
+              />
+              <DeleteAccountSettings />
+              <AboutSettings />
+            </div>
+          )}
         </div>
       </main>
 
